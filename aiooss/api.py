@@ -148,9 +148,9 @@ class _Base(object):
 
         return resp
 
-    def _parse_result(self, resp, parse_func, klass):
+    async def _parse_result(self, resp, parse_func, klass):
         result = klass(resp)
-        parse_func(result, resp.read())
+        parse_func(result, await resp.read())
         return result
 
     def clean(self):
@@ -275,7 +275,7 @@ class Bucket(_Base):
                            params=params)
         return self.auth._sign_url(req, self.bucket_name, key, expires)
 
-    def list_objects(self, prefix='', delimiter='', marker='', max_keys=100):
+    async def list_objects(self, prefix='', delimiter='', marker='', max_keys=100):
         """根据前缀罗列Bucket里的文件。
 
         :param str prefix: 只罗列文件名为该前缀的文件
@@ -285,13 +285,16 @@ class Bucket(_Base):
 
         :return: :class:`ListObjectsResult <oss2.models.ListObjectsResult>`
         """
-        resp = self.__do_object('GET', '',
+        resp = await self.__do_object('GET', '',
                                 params={'prefix': prefix,
                                         'delimiter': delimiter,
                                         'marker': marker,
                                         'max-keys': str(max_keys),
                                         'encoding-type': 'url'})
-        return self._parse_result(resp, xml_utils.parse_list_objects, ListObjectsResult)
+
+        result = await self._parse_result(resp, xml_utils.parse_list_objects, ListObjectsResult)
+
+        return result
 
     async def put_object(self, key, data,
                    headers=None,
@@ -324,7 +327,7 @@ class Bucket(_Base):
         # return PutObjectResult(resp)
         return resp
 
-    def put_object_from_file(self, key, filename,
+    async def put_object_from_file(self, key, filename,
                              headers=None,
                              progress_callback=None):
         """上传一个本地文件到OSS的普通文件。
@@ -342,9 +345,9 @@ class Bucket(_Base):
         headers = utils.set_content_type(http.CaseInsensitiveDict(headers), filename)
 
         with open(to_unicode(filename), 'rb') as f:
-            return self.put_object(key, f, headers=headers, progress_callback=progress_callback)
+            return (await self.put_object(key, f, headers=headers, progress_callback=progress_callback))
 
-    def append_object(self, key, position, data,
+    async def append_object(self, key, position, data,
                       headers=None,
                       progress_callback=None):
         """追加上传一个文件。
@@ -372,7 +375,7 @@ class Bucket(_Base):
         if progress_callback:
             data = utils.make_progress_adapter(data, progress_callback)
 
-        resp = self.__do_object('POST', key,
+        resp = await self.__do_object('POST', key,
                                 data=data,
                                 headers=headers,
                                 params={'append': '', 'position': str(position)})
@@ -412,7 +415,7 @@ class Bucket(_Base):
         # return GetObjectResult(resp, progress_callback=progress_callback)
         return resp
 
-    def get_object_to_file(self, key, filename,
+    async def get_object_to_file(self, key, filename,
                            byte_range=None,
                            headers=None,
                            progress_callback=None):
@@ -430,12 +433,12 @@ class Bucket(_Base):
         :return: 如果文件不存在，则抛出 :class:`NoSuchKey <oss2.exceptions.NoSuchKey>` ；还可能抛出其他异常
         """
         with open(to_unicode(filename), 'wb') as f:
-            result = self.get_object(key, byte_range=byte_range, headers=headers, progress_callback=progress_callback)
+            result = (await self.get_object(key, byte_range=byte_range, headers=headers, progress_callback=progress_callback))
             shutil.copyfileobj(result, f)
 
             return result
 
-    def head_object(self, key, headers=None):
+    async def head_object(self, key, headers=None):
         """获取文件元信息。
 
         HTTP响应的头部包含了文件元信息，可以通过 `RequestResult` 的 `headers` 成员获得。
@@ -454,10 +457,10 @@ class Bucket(_Base):
 
         :raises: 如果Bucket不存在或者Object不存在，则抛出 :class:`NotFound <oss2.exceptions.NotFound>`
         """
-        resp = self.__do_object('HEAD', key, headers=headers)
+        resp = await self.__do_object('HEAD', key, headers=headers)
         return HeadObjectResult(resp)
 
-    def object_exists(self, key):
+    async def object_exists(self, key):
         """如果文件存在就返回True，否则返回False。如果Bucket不存在，或是发生其他错误，则抛出异常。"""
 
         # 如果我们用head_object来实现的话，由于HTTP HEAD请求没有响应体，只有响应头部，这样当发生404时，
@@ -468,7 +471,7 @@ class Bucket(_Base):
         date = utils.http_date(int(time.time()) + 24 * 60 * 60)
 
         try:
-            self.get_object(key, headers={'if-modified-since': date})
+            await self.get_object(key, headers={'if-modified-since': date})
         except exceptions.NotModified:
             return True
         except exceptions.NoSuchKey:
@@ -498,7 +501,7 @@ class Bucket(_Base):
         # return PutObjectResult(resp)
         return resp
 
-    def update_object_meta(self, key, headers):
+    async def update_object_meta(self, key, headers):
         """更改Object的元数据信息，包括Content-Type这类标准的HTTP头部，以及以x-oss-meta-开头的自定义元数据。
 
         用户可以通过 :func:`head_object` 获得元数据信息。
@@ -510,19 +513,19 @@ class Bucket(_Base):
 
         :return: :class:`RequestResult <oss2.models.RequestResults>`
         """
-        return self.copy_object(key, key, headers=headers)
+        return (await self.copy_object(key, key, headers=headers))
 
-    def delete_object(self, key):
+    async def delete_object(self, key):
         """删除一个文件。
 
         :param str key: 文件名
 
         :return: :class:`RequestResult <oss2.models.RequestResult>`
         """
-        resp = self.__do_object('DELETE', key)
+        resp = await self.__do_object('DELETE', key)
         return RequestResult(resp)
 
-    def put_object_acl(self, key, permission):
+    async def put_object_acl(self, key, permission):
         """设置文件的ACL。
 
         :param str key: 文件名
@@ -531,18 +534,18 @@ class Bucket(_Base):
 
         :return: :class:`RequestResult <oss2.models.RequestResult>`
         """
-        resp = self.__do_object('PUT', key, params={'acl': ''}, headers={'x-oss-object-acl': permission})
+        resp = await self.__do_object('PUT', key, params={'acl': ''}, headers={'x-oss-object-acl': permission})
         return RequestResult(resp)
 
-    def get_object_acl(self, key):
+    async def get_object_acl(self, key):
         """获取文件的ACL。
 
         :return: :class:`GetObjectAclResult <oss2.models.GetObjectAclResult>`
         """
-        resp = self.__do_object('GET', key, params={'acl': ''})
-        return self._parse_result(resp, xml_utils.parse_get_object_acl, GetObjectAclResult)
+        resp = await self.__do_object('GET', key, params={'acl': ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_object_acl, GetObjectAclResult))
 
-    def batch_delete_objects(self, key_list):
+    async def batch_delete_objects(self, key_list):
         """批量删除文件。待删除文件列表不能为空。
 
         :param key_list: 文件名列表，不能为空。
@@ -554,13 +557,13 @@ class Bucket(_Base):
             raise ClientError('key_list should not be empty')
 
         data = xml_utils.to_batch_delete_objects_request(key_list, False)
-        resp = self.__do_object('POST', '',
+        resp = await self.__do_object('POST', '',
                                 data=data,
                                 params={'delete': '', 'encoding-type': 'url'},
                                 headers={'Content-MD5': utils.content_md5(data)})
-        return self._parse_result(resp, xml_utils.parse_batch_delete_objects, BatchDeleteObjectsResult)
+        return (await self._parse_result(resp, xml_utils.parse_batch_delete_objects, BatchDeleteObjectsResult))
 
-    def init_multipart_upload(self, key, headers=None):
+    async def init_multipart_upload(self, key, headers=None):
         """初始化分片上传。
 
         返回值中的 `upload_id` 以及Bucket名和Object名三元组唯一对应了此次分片上传事件。
@@ -574,10 +577,10 @@ class Bucket(_Base):
         """
         headers = utils.set_content_type(http.CaseInsensitiveDict(headers), key)
 
-        resp = self.__do_object('POST', key, params={'uploads': ''}, headers=headers)
-        return self._parse_result(resp, xml_utils.parse_init_multipart_upload, InitMultipartUploadResult)
+        resp = await self.__do_object('POST', key, params={'uploads': ''}, headers=headers)
+        return (await self._parse_result(resp, xml_utils.parse_init_multipart_upload, InitMultipartUploadResult))
 
-    def upload_part(self, key, upload_id, part_number, data, progress_callback=None):
+    async def upload_part(self, key, upload_id, part_number, data, progress_callback=None):
         """上传一个分片。
 
         :param str key: 待上传文件名，这个文件名要和 :func:`init_multipart_upload` 的文件名一致。
@@ -591,12 +594,12 @@ class Bucket(_Base):
         if progress_callback:
             data = utils.make_progress_adapter(data, progress_callback)
 
-        resp = self.__do_object('PUT', key,
+        resp = await self.__do_object('PUT', key,
                                 params={'uploadId': upload_id, 'partNumber': str(part_number)},
                                 data=data)
         return PutObjectResult(resp)
 
-    def complete_multipart_upload(self, key, upload_id, parts, headers=None):
+    async def complete_multipart_upload(self, key, upload_id, parts, headers=None):
         """完成分片上传，创建文件。
 
         :param str key: 待上传的文件名，这个文件名要和 :func:`init_multipart_upload` 的文件名一致。
@@ -611,14 +614,14 @@ class Bucket(_Base):
         :return: :class:`PutObjectResult <oss2.models.PutObjectResult>`
         """
         data = xml_utils.to_complete_upload_request(sorted(parts, key=lambda p: p.part_number))
-        resp = self.__do_object('POST', key,
+        resp = await self.__do_object('POST', key,
                                 params={'uploadId': upload_id},
                                 data=data,
                                 headers=headers)
 
         return PutObjectResult(resp)
 
-    def abort_multipart_upload(self, key, upload_id):
+    async def abort_multipart_upload(self, key, upload_id):
         """取消分片上传。
 
         :param str key: 待上传的文件名，这个文件名要和 :func:`init_multipart_upload` 的文件名一致。
@@ -626,11 +629,11 @@ class Bucket(_Base):
 
         :return: :class:`RequestResult <oss2.models.RequestResult>`
         """
-        resp = self.__do_object('DELETE', key,
+        resp = await self.__do_object('DELETE', key,
                                 params={'uploadId': upload_id})
         return RequestResult(resp)
 
-    def list_multipart_uploads(self,
+    async def list_multipart_uploads(self,
                                prefix='',
                                delimiter='',
                                key_marker='',
@@ -646,7 +649,7 @@ class Bucket(_Base):
 
         :return: :class:`ListMultipartUploadsResult <oss2.models.ListMultipartUploadsResult>`
         """
-        resp = self.__do_object('GET', '',
+        resp = await self.__do_object('GET', '',
                                 params={'uploads': '',
                                         'prefix': prefix,
                                         'delimiter': delimiter,
@@ -654,9 +657,9 @@ class Bucket(_Base):
                                         'upload-id-marker': upload_id_marker,
                                         'max-uploads': str(max_uploads),
                                         'encoding-type': 'url'})
-        return self._parse_result(resp, xml_utils.parse_list_multipart_uploads, ListMultipartUploadsResult)
+        return (await self._parse_result(resp, xml_utils.parse_list_multipart_uploads, ListMultipartUploadsResult))
 
-    def upload_part_copy(self, source_bucket_name, source_key, byte_range,
+    async def upload_part_copy(self, source_bucket_name, source_key, byte_range,
                          target_key, target_upload_id, target_part_number,
                          headers=None):
         """分片拷贝。把一个已有文件的一部分或整体拷贝成目标文件的一个分片。
@@ -675,14 +678,14 @@ class Bucket(_Base):
         if range_string:
             headers['x-oss-copy-source-range'] = range_string
 
-        resp = self.__do_object('PUT', target_key,
+        resp = await self.__do_object('PUT', target_key,
                                 params={'uploadId': target_upload_id,
                                         'partNumber': str(target_part_number)},
                                 headers=headers)
 
         return PutObjectResult(resp)
 
-    def list_parts(self, key, upload_id,
+    async def list_parts(self, key, upload_id,
                    marker='', max_parts=1000):
         """列举已经上传的分片。支持分页。
 
@@ -693,13 +696,13 @@ class Bucket(_Base):
 
         :return: :class:`ListPartsResult <oss2.models.ListPartsResult>`
         """
-        resp = self.__do_object('GET', key,
+        resp = await self.__do_object('GET', key,
                                 params={'uploadId': upload_id,
                                         'part-number-marker': marker,
                                         'max-parts': str(max_parts)})
-        return self._parse_result(resp, xml_utils.parse_list_parts, ListPartsResult)
+        return (await self._parse_result(resp, xml_utils.parse_list_parts, ListPartsResult))
 
-    def create_bucket(self, permission=None):
+    async def create_bucket(self, permission=None):
         """创建新的Bucket。
 
         :param str permission: 指定Bucket的ACL。可以是oss2.BUCKET_ACL_PRIVATE（推荐、缺省）、oss2.BUCKET_ACL_PUBLIC_READ或是
@@ -709,154 +712,154 @@ class Bucket(_Base):
             headers = {'x-oss-acl': permission}
         else:
             headers = None
-        resp = self.__do_bucket('PUT', headers=headers)
+        resp = await self.__do_bucket('PUT', headers=headers)
         return RequestResult(resp)
 
-    def delete_bucket(self):
+    async def delete_bucket(self):
         """删除一个Bucket。只有没有任何文件，也没有任何未完成的分片上传的Bucket才能被删除。
 
         :return: :class:`RequestResult <oss2.models.RequestResult>`
 
         ":raises: 如果试图删除一个非空Bucket，则抛出 :class:`BucketNotEmpty <oss2.exceptions.BucketNotEmpty>`
         """
-        resp = self.__do_bucket('DELETE')
+        resp = await self.__do_bucket('DELETE')
         return RequestResult(resp)
 
-    def put_bucket_acl(self, permission):
+    async def put_bucket_acl(self, permission):
         """设置Bucket的ACL。
 
         :param str permission: 新的ACL，可以是oss2.BUCKET_ACL_PRIVATE、oss2.BUCKET_ACL_PUBLIC_READ或
             oss2.BUCKET_ACL_PUBLIC_READ_WRITE
         """
-        resp = self.__do_bucket('PUT', headers={'x-oss-acl': permission}, params={Bucket.ACL: ''})
+        resp = await self.__do_bucket('PUT', headers={'x-oss-acl': permission}, params={Bucket.ACL: ''})
         return RequestResult(resp)
 
-    def get_bucket_acl(self):
+    async def get_bucket_acl(self):
         """获取Bucket的ACL。
 
         :return: :class:`GetBucketAclResult <oss2.models.GetBucketAclResult>`
         """
-        resp = self.__do_bucket('GET', params={Bucket.ACL: ''})
-        return self._parse_result(resp, xml_utils.parse_get_bucket_acl, GetBucketAclResult)
+        resp = await self.__do_bucket('GET', params={Bucket.ACL: ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_bucket_acl, GetBucketAclResult))
 
-    def put_bucket_cors(self, input):
+    async def put_bucket_cors(self, input):
         """设置Bucket的CORS。
 
         :param input: :class:`BucketCors <oss2.models.BucketCors>` 对象或其他
         """
         data = self.__convert_data(BucketCors, xml_utils.to_put_bucket_cors, input)
-        resp = self.__do_bucket('PUT', data=data, params={Bucket.CORS: ''})
+        resp = await self.__do_bucket('PUT', data=data, params={Bucket.CORS: ''})
         return RequestResult(resp)
 
-    def get_bucket_cors(self):
+    async def get_bucket_cors(self):
         """获取Bucket的CORS配置。
 
         :return: :class:`GetBucketCorsResult <oss2.models.GetBucketCorsResult>`
         """
-        resp = self.__do_bucket('GET', params={Bucket.CORS: ''})
-        return self._parse_result(resp, xml_utils.parse_get_bucket_cors, GetBucketCorsResult)
+        resp = await self.__do_bucket('GET', params={Bucket.CORS: ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_bucket_cors, GetBucketCorsResult))
 
-    def delete_bucket_cors(self):
+    async def delete_bucket_cors(self):
         """删除Bucket的CORS配置。"""
-        resp = self.__do_bucket('DELETE', params={Bucket.CORS: ''})
+        resp = await self.__do_bucket('DELETE', params={Bucket.CORS: ''})
         return RequestResult(resp)
 
-    def put_bucket_lifecycle(self, input):
+    async def put_bucket_lifecycle(self, input):
         """设置生命周期管理的配置。
 
         :param input: :class:`BucketLifecycle <oss2.models.BucketLifecycle>` 对象或其他
         """
         data = self.__convert_data(BucketLifecycle, xml_utils.to_put_bucket_lifecycle, input)
-        resp = self.__do_bucket('PUT', data=data, params={Bucket.LIFECYCLE: ''})
+        resp = await self.__do_bucket('PUT', data=data, params={Bucket.LIFECYCLE: ''})
         return RequestResult(resp)
 
-    def get_bucket_lifecycle(self):
+    async def get_bucket_lifecycle(self):
         """获取生命周期管理配置。
 
         :return: :class:`GetBucketLifecycleResult <oss2.models.GetBucketLifecycleResult>`
 
         :raises: 如果没有设置Lifecycle，则抛出 :class:`NoSuchLifecycle <oss2.exceptions.NoSuchLifecycle>`
         """
-        resp = self.__do_bucket('GET', params={Bucket.LIFECYCLE: ''})
-        return self._parse_result(resp, xml_utils.parse_get_bucket_lifecycle, GetBucketLifecycleResult)
+        resp = await self.__do_bucket('GET', params={Bucket.LIFECYCLE: ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_bucket_lifecycle, GetBucketLifecycleResult))
 
-    def delete_bucket_lifecycle(self):
+    async def delete_bucket_lifecycle(self):
         """删除生命周期管理配置。如果Lifecycle没有设置，也返回成功。"""
-        resp = self.__do_bucket('DELETE', params={Bucket.LIFECYCLE: ''})
+        resp = await self.__do_bucket('DELETE', params={Bucket.LIFECYCLE: ''})
         return RequestResult(resp)
 
-    def get_bucket_location(self):
+    async def get_bucket_location(self):
         """获取Bucket的数据中心。
 
         :return: :class:`GetBucketLocationResult <oss2.models.GetBucketLocationResult>`
         """
-        resp = self.__do_bucket('GET', params={Bucket.LOCATION: ''})
-        return self._parse_result(resp, xml_utils.parse_get_bucket_location, GetBucketLocationResult)
+        resp = await self.__do_bucket('GET', params={Bucket.LOCATION: ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_bucket_location, GetBucketLocationResult))
 
-    def put_bucket_logging(self, input):
+    async def put_bucket_logging(self, input):
         """设置Bucket的访问日志功能。
 
         :param input: :class:`BucketLogging <oss2.models.BucketLogging>` 对象或其他
         """
         data = self.__convert_data(BucketLogging, xml_utils.to_put_bucket_logging, input)
-        resp = self.__do_bucket('PUT', data=data, params={Bucket.LOGGING: ''})
+        resp = await self.__do_bucket('PUT', data=data, params={Bucket.LOGGING: ''})
         return RequestResult(resp)
 
-    def get_bucket_logging(self):
+    async def get_bucket_logging(self):
         """获取Bucket的访问日志功能配置。
 
         :return: :class:`GetBucketLoggingResult <oss2.models.GetBucketLoggingResult>`
         """
-        resp = self.__do_bucket('GET', params={Bucket.LOGGING: ''})
-        return self._parse_result(resp, xml_utils.parse_get_bucket_logging, GetBucketLoggingResult)
+        resp = await self.__do_bucket('GET', params={Bucket.LOGGING: ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_bucket_logging, GetBucketLoggingResult))
 
-    def delete_bucket_logging(self):
+    async def delete_bucket_logging(self):
         """关闭Bucket的访问日志功能。"""
-        resp = self.__do_bucket('DELETE', params={Bucket.LOGGING: ''})
+        resp = await self.__do_bucket('DELETE', params={Bucket.LOGGING: ''})
         return RequestResult(resp)
 
-    def put_bucket_referer(self, input):
+    async def put_bucket_referer(self, input):
         """为Bucket设置防盗链。
 
         :param input: :class:`BucketReferer <oss2.models.BucketReferer>` 对象或其他
         """
         data = self.__convert_data(BucketReferer, xml_utils.to_put_bucket_referer, input)
-        resp = self.__do_bucket('PUT', data=data, params={Bucket.REFERER: ''})
+        resp = await self.__do_bucket('PUT', data=data, params={Bucket.REFERER: ''})
         return RequestResult(resp)
 
-    def get_bucket_referer(self):
+    async def get_bucket_referer(self):
         """获取Bucket的防盗链配置。
 
         :return: :class:`GetBucketRefererResult <oss2.models.GetBucketRefererResult>`
         """
-        resp = self.__do_bucket('GET', params={Bucket.REFERER: ''})
-        return self._parse_result(resp, xml_utils.parse_get_bucket_referer, GetBucketRefererResult)
+        resp = await self.__do_bucket('GET', params={Bucket.REFERER: ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_bucket_referer, GetBucketRefererResult))
 
-    def put_bucket_website(self, input):
+    async def put_bucket_website(self, input):
         """为Bucket配置静态网站托管功能。
 
         :param input: :class:`BucketWebsite <oss2.models.BucketWebsite>`
         """
         data = self.__convert_data(BucketWebsite, xml_utils.to_put_bucket_website, input)
-        resp = self.__do_bucket('PUT', data=data, params={Bucket.WEBSITE: ''})
+        resp = await self.__do_bucket('PUT', data=data, params={Bucket.WEBSITE: ''})
         return RequestResult(resp)
 
-    def get_bucket_website(self):
+    async def get_bucket_website(self):
         """获取Bucket的静态网站托管配置。
 
         :return: :class:`GetBucketWebsiteResult <oss2.models.GetBucketWebsiteResult>`
 
         :raises: 如果没有设置静态网站托管，那么就抛出 :class:`NoSuchWebsite <oss2.exceptions.NoSuchWebsite>`
         """
-        resp = self.__do_bucket('GET', params={Bucket.WEBSITE: ''})
-        return self._parse_result(resp, xml_utils.parse_get_bucket_websiste, GetBucketWebsiteResult)
+        resp = await self.__do_bucket('GET', params={Bucket.WEBSITE: ''})
+        return (await self._parse_result(resp, xml_utils.parse_get_bucket_websiste, GetBucketWebsiteResult))
 
-    def delete_bucket_website(self):
+    async def delete_bucket_website(self):
         """关闭Bucket的静态网站托管功能。"""
-        resp = self.__do_bucket('DELETE', params={Bucket.WEBSITE: ''})
+        resp = await self.__do_bucket('DELETE', params={Bucket.WEBSITE: ''})
         return RequestResult(resp)
 
-    def _get_bucket_config(self, config):
+    async def _get_bucket_config(self, config):
         """获得Bucket某项配置，具体哪种配置由 `config` 指定。该接口直接返回 `RequestResult` 对象。
         通过read()接口可以获得XML字符串。不建议使用。
 
@@ -864,13 +867,13 @@ class Bucket(_Base):
 
         :return: :class:`RequestResult <oss2.models.RequestResult>`
         """
-        return self.__do_bucket('GET', params={config: ''})
+        return (await self.__do_bucket('GET', params={config: ''}))
 
     async def __do_object(self, method, key, **kwargs):
         return await self._do(method, self.bucket_name, key, **kwargs)
 
-    def __do_bucket(self, method, **kwargs):
-        return self._do(method, self.bucket_name, '', **kwargs)
+    async def __do_bucket(self, method, **kwargs):
+        return (await self._do(method, self.bucket_name, '', **kwargs))
 
     def __convert_data(self, klass, converter, data):
         if isinstance(data, klass):
